@@ -1,0 +1,47 @@
+let
+    Source = #"fincon-canstar",
+    #"Changed Type" = Table.TransformColumnTypes(Source,{{"6 Months", type text}, {"12 Months", type text}, {"24 Months", type text}, {"3 Years", type text}, {"4 Years", type text}, {"5 Years", type text}, {"SUPP.COMPANY_NAME", type text}, {"SUPP.TERM_GROUP_DESCRIPTION", type text}}),
+    #"Sorted Rows1" = Table.Sort(#"Changed Type",{{"SUPP.COMPANY_NAME", Order.Ascending}, {"SUPP.TERM_GROUP_DESCRIPTION", Order.Ascending}}),
+    #"Replaced Value1" = Table.ReplaceValue(#"Sorted Rows1","",null,Replacer.ReplaceValue,{"6 Months", "12 Months", "24 Months", "3 Years", "4 Years", "5 Years"}),
+    Custom1 = Table.TransformColumns(#"Replaced Value1",List.Transform({"6 Months", "12 Months", "24 Months", "3 Years", "4 Years", "5 Years"}, each {_, (inner) => inner & "%", type text})),
+    #"Renamed Columns" = Table.RenameColumns(Custom1,{{"SUPP.COMPANY_NAME", "Company Name"}}),
+    #"Unpivoted Columns" = Table.UnpivotOtherColumns(#"Renamed Columns", {"Source.Name", "Company Name", "SUPP.PROD_NAME", "SUPP.PAYMENT_FREQUENCY", "SUPP.TERM_GROUP_DESCRIPTION"}, "Attribute", "Value"),
+    #"Inserted Merged Column" = Table.AddColumn(#"Unpivoted Columns", "Merged", each Text.Combine({[Company Name], [SUPP.PROD_NAME]}, " "), type text),
+    #"Filtered Rows" = Table.SelectRows(#"Inserted Merged Column", each [Merged] <> "ANZ Term Deposit"),
+    #"---- Breakout step -----" = #"Filtered Rows" // break out from flow to set up frequency structure
+ // set up frequency structure
+ // set up frequency structure
+,
+    #"Set up structure" = #"Filtered Rows",
+    #"Removed Columns1" = Table.RemoveColumns(#"Set up structure",{"SUPP.PAYMENT_FREQUENCY", "SUPP.TERM_GROUP_DESCRIPTION", "Attribute", "Value", "Merged"}),
+    #"Removed Duplicates" = Table.Distinct(#"Removed Columns1"),
+    #"Added Custom" = Table.AddColumn(#"Removed Duplicates", "zero", each "zero"),
+    #"Merged Queries1" = Table.NestedJoin(#"Added Custom", {"zero"}, #"Set up", {"zero"}, "Set up", JoinKind.LeftOuter),
+    #"Expanded Set up" = Table.ExpandTableColumn(#"Merged Queries1", "Set up", {"Frequency"}, {"Frequency"}),
+    #"Removed Columns2" = Table.RemoveColumns(#"Expanded Set up",{"zero"}),
+    #"Done: Structure" = #"Removed Columns2",
+    #"---- Breakout step 2 ----" = #"Filtered Rows" // break out from flow to filter to annual payments frequency only
+,
+    #"Filtered to ""Annually""" = Table.SelectRows(#"---- Breakout step 2 ----", each ([SUPP.PAYMENT_FREQUENCY] = "Annually")),
+    #"Merged Queries2" = Table.NestedJoin(#"Done: Structure", {"Source.Name", "Company Name", "SUPP.PROD_NAME", "Frequency"}, #"Filtered to ""Annually""", {"Source.Name", "Company Name", "SUPP.PROD_NAME", "Attribute"}, "Filtered to ""Annually""", JoinKind.LeftOuter),
+    #"Expanded Filtered to ""Annually""" = Table.ExpandTableColumn(#"Merged Queries2", "Filtered to ""Annually""", {"Value"}, {"Annual.Rates"}),
+    #"Done: Merged Annual Term Deposit" = #"Expanded Filtered to ""Annually""",
+    #"Filtered to ""End of term""" = Table.SelectRows(#"---- Breakout step 2 ----", each ([SUPP.PAYMENT_FREQUENCY] = "End of term")),
+    #"Merged Queries3" = Table.NestedJoin(#"Done: Merged Annual Term Deposit", {"Source.Name", "Company Name", "SUPP.PROD_NAME", "Frequency"}, #"Filtered to ""End of term""", {"Source.Name", "Company Name", "SUPP.PROD_NAME", "Attribute"}, "Filtered to ""End of term""", JoinKind.LeftOuter),
+    #"Expanded Filtered to ""End of term""1" = Table.ExpandTableColumn(#"Merged Queries3", "Filtered to ""End of term""", {"Value"}, {"End of term.Rates"}),
+    #"Done: Merged End of Term Rates" = #"Expanded Filtered to ""End of term""1",
+    #"---- Resume step ----" = #"Done: Merged End of Term Rates",
+    #"Replaced Value" = Table.ReplaceValue(#"---- Resume step ----",null,0,Replacer.ReplaceValue,{"Annual.Rates", "End of term.Rates"}),
+    #"Changed Type1" = Table.TransformColumnTypes(#"Replaced Value",{{"Annual.Rates", Percentage.Type}, {"End of term.Rates", Percentage.Type}}),
+    #"Added Conditional Column" = Table.AddColumn(#"Changed Type1", "Rate", each if [End of term.Rates] = 0 then [Annual.Rates] else [End of term.Rates]),
+    #"Inserted Text Between Delimiters" = Table.AddColumn(#"Added Conditional Column", "Date", each Text.BetweenDelimiters([Source.Name], " - ", "."), type date),
+    #"Changed Type2" = Table.TransformColumnTypes(#"Inserted Text Between Delimiters",{{"Rate", Percentage.Type}}),
+    #"Filtered Rows1" = Table.SelectRows(#"Changed Type2", each [Rate] <> 0),
+    #"Removed Other Columns" = Table.SelectColumns(#"Filtered Rows1",{"Date", "Company Name", "SUPP.PROD_NAME", "Frequency", "Rate"}),
+    #"Pivoted Column" = Table.Pivot(#"Removed Other Columns", List.Distinct(#"Removed Other Columns"[Frequency]), "Frequency", "Rate"),
+    #"Appended Query" = Table.Combine({#"Pivoted Column", #"fincon-pnnbank", #"fincon-racq", #"fincon-rac", #"fincon-macquarie", #"fincon-amp"}),
+    #"Removed Other Columns1" = Table.SelectColumns(#"Appended Query",{"Date", "Company Name", "SUPP.PROD_NAME", "6 Months", "12 Months", "24 Months", "3 Years", "4 Years", "5 Years"}),
+    #"Changed Type3" = Table.TransformColumnTypes(#"Removed Other Columns1",{{"6 Months", Percentage.Type}, {"12 Months", Percentage.Type}, {"24 Months", Percentage.Type}, {"3 Years", Percentage.Type}, {"4 Years", Percentage.Type}, {"5 Years", Percentage.Type}, {"Date", type date}}),
+    #"Appended Query1" = Table.Combine({#"Changed Type3", #"Flattened Term Deposit"})
+in
+    #"Appended Query1"
